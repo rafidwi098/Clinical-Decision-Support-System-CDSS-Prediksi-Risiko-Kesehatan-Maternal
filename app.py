@@ -29,9 +29,7 @@ st.title("🩺 Clinical Decision Support System (CDSS)")
 st.subheader("Prediksi Risiko Kesehatan Maternal")
 
 # 1. Load Data
-
 st.sidebar.header("Upload Data")
-
 uploaded_file = st.sidebar.file_uploader("Upload dataset (.csv / .txt)", type=["csv", "txt"])
 
 if uploaded_file is not None:
@@ -53,10 +51,9 @@ if uploaded_file is not None:
     
     start_training = st.sidebar.button("Mulai Training")
 
-  
     # 2. Auto-Feature Selection & Training
     if start_training:
-        with st.spinner('Mencari kombinasi fitur terbaik'):
+        with st.spinner('Mencari kombinasi fitur terbaik (Proses ini dioptimasi agar memori tidak penuh)...'):
 
             y = df[target_col]
             le = LabelEncoder()
@@ -78,10 +75,10 @@ if uploaded_file is not None:
                     features = list(combo)
                     X_subset = df[features]
                     
-                    # Rata-rata akurasi CV
+                    # Rata-rata akurasi CV (n_jobs=1 agar RAM server tidak penuh)
                     model_scores = []
                     for model in eval_models:
-                        scores = cross_val_score(model, X_subset, y_enc, cv=5, scoring='accuracy', n_jobs=-1)
+                        scores = cross_val_score(model, X_subset, y_enc, cv=5, scoring='accuracy', n_jobs=1)
                         model_scores.append(scores.mean())
                     
                     mean_acc = np.mean(model_scores)
@@ -102,7 +99,7 @@ if uploaded_file is not None:
             st.session_state['best_features'] = best_features
             st.session_state['best_acc_selection'] = best_acc
 
-        with st.spinner('Melakukan Training & Tuning'):
+        with st.spinner('Melakukan Training & Tuning pada Fitur Terbaik...'):
             X_best = df[best_features]
             X_train, X_test, y_train, y_test = train_test_split(
                 X_best, y_enc, test_size=0.30, random_state=42, stratify=y_enc
@@ -130,7 +127,8 @@ if uploaded_file is not None:
             fitted_models = {}
 
             for name, config in models_configs.items():
-                grid = GridSearchCV(config["model"], config["params"], cv=5, scoring='accuracy', n_jobs=-1)
+                # n_jobs=1 wajib digunakan agar Cloud RAM stabil
+                grid = GridSearchCV(config["model"], config["params"], cv=5, scoring='accuracy', n_jobs=1)
                 grid.fit(X_train, y_train)
                 
                 best_model = grid.best_estimator_
@@ -155,7 +153,7 @@ if uploaded_file is not None:
             st.success("Seleksi Fitur dan Training Selesai!")
 
 
-    if 'df_raw' in st.session_state:
+    if 'df_raw' in st.session_state and 'best_model' in st.session_state:
         # Tab Navigasi
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "EDA (Data Asli)", 
@@ -216,7 +214,6 @@ if uploaded_file is not None:
                 ax_hist.set_xlabel("") 
                 ax_hist.grid(axis='y', linestyle='--', alpha=0.6)
                 
-                # Boxplot
                 sns.boxplot(x=df_eda[feature], ax=ax_box, color='lightgray', flierprops=dict(marker='o', markerfacecolor='red', markersize=6, linestyle='none'))
                 ax_box.set_xlabel(f"Nilai {feature}", fontsize=12)
                 
@@ -225,7 +222,7 @@ if uploaded_file is not None:
             st.markdown("---")
             st.markdown("**5. Matriks Korelasi**")
             
-            corr_matrix = df_eda[features_all].corr()
+            corr_matrix = df_eda[features_all].corr(numeric_only=True)
             fig_corr, ax_corr = plt.subplots(figsize=(10, 8))
             cax = ax_corr.matshow(corr_matrix, cmap='coolwarm', vmin=-1, vmax=1)
             fig_corr.colorbar(cax, shrink=0.8)
@@ -247,14 +244,14 @@ if uploaded_file is not None:
             st.pyplot(fig_corr)
 
             st.markdown("---")
-            st.markdown("**6. Signifikansi Parameter**")
+            st.markdown("**6. Signifikansi Parameter Seluruh Fitur**")
       
             X_all_eda = df_eda[features_all]
             y_all_eda = LabelEncoder().fit_transform(df_eda[target_eda])
             rf_base = RandomForestClassifier(random_state=42, class_weight='balanced')
             rf_base.fit(X_all_eda, y_all_eda)
             
-            with st.spinner('Menghitung signifikansi parameter'):
+            with st.spinner('Menghitung signifikansi parameter...'):
                 perm_all = permutation_importance(rf_base, X_all_eda, y_all_eda, n_repeats=10, random_state=42, scoring="accuracy")
                 imp_df_all = pd.DataFrame({
                     "Feature": features_all,
@@ -270,11 +267,9 @@ if uploaded_file is not None:
                 ax_imp_all.set_title("Tingkat Kepentingan Seluruh Parameter Asli")
                 st.pyplot(fig_imp_all)
 
-
         if 'combo_df' in st.session_state:
             best_features = st.session_state['best_features']
             
-  
             # TAB 2
             with tab2:
                 st.header("Hasil Auto-Feature Selection (Ensemble Evaluator)")                
@@ -300,6 +295,7 @@ if uploaded_file is not None:
                         palette_dict[val] = '#fc4f4f'  
                     else:
                         palette_dict[val] = 'gray'
+                        
                 fig_pair = sns.pairplot(
                     df_pairplot,
                     vars=best_features,
@@ -314,8 +310,7 @@ if uploaded_file is not None:
                 st.pyplot(fig_pair.fig)
 
                 st.markdown("---")
-                st.markdown(f"###Distribusi & Outlier Individual ({len(best_features)})")
-                st.write("Distribusi dan outlier")
+                st.markdown(f"### Distribusi & Outlier Individual ({len(best_features)})")
                 
                 for feature in best_features:
                     fig_dist, (ax_hist, ax_box) = plt.subplots(2, 1, figsize=(10, 6), gridspec_kw={"height_ratios": (.8, .2)}, sharex=True)
@@ -333,9 +328,9 @@ if uploaded_file is not None:
                     st.pyplot(fig_dist)
 
                 st.markdown("---")
-                st.markdown("###Matriks Korelasi")
+                st.markdown("### Matriks Korelasi Parameter Terpilih")
                 if len(best_features) > 1:
-                    corr_matrix_best = df_eda[best_features].corr()
+                    corr_matrix_best = df_eda[best_features].corr(numeric_only=True)
                     fig_corr_best, ax_corr_best = plt.subplots(figsize=(8, 6))
                     cax_best = ax_corr_best.matshow(corr_matrix_best, cmap='coolwarm', vmin=-1, vmax=1)
                     fig_corr_best.colorbar(cax_best, shrink=0.8)
@@ -356,13 +351,13 @@ if uploaded_file is not None:
 
                     st.pyplot(fig_corr_best)
                 else:
-                    st.info("Kombinasi terbaik hanya terdiri dari 1 parameter, sehingga matriks korelasi antar variabel tidak dapat ditampilkan.")
+                    st.info("Kombinasi terbaik hanya terdiri dari 1 parameter, sehingga matriks korelasi tidak dapat ditampilkan.")
 
                 st.markdown("---")
                 best_name = st.session_state['best_name']
-                st.markdown(f"###Signifikansi Parameter Terpilih ({best_name})")
+                st.markdown(f"### Signifikansi Parameter Terpilih ({best_name})")
                 
-                with st.spinner('Menghitung signifikansi parameter klinis'):
+                with st.spinner('Menghitung signifikansi parameter klinis...'):
                     best_model = st.session_state['best_model']
                     X_test = st.session_state['X_test']
                     y_test = st.session_state['y_test']
@@ -509,7 +504,7 @@ if uploaded_file is not None:
                         pred_label = le.inverse_transform([pred_class_idx])[0]
 
                         st.markdown("---")
-                        st.markdown("###HASIL PREDIKSI & STATUS TRIASE:")
+                        st.markdown("### HASIL PREDIKSI & STATUS TRIASE:")
                         if pred_label == 'high risk':
                             st.error(f"🚨 **STATUS: {pred_label.upper()} (KODE MERAH) - POTENSI KOMPLIKASI TINGGI**")
                         elif pred_label == 'mid risk':
@@ -518,7 +513,7 @@ if uploaded_file is not None:
                             st.success(f"✅ **STATUS: {pred_label.upper()} (KODE HIJAU) - KONDISI KLINIS STABIL**")
 
                         st.markdown("---")
-                        st.markdown("###PROTOKOL PENANGANAN KLINIS :")
+                        st.markdown("### PROTOKOL PENANGANAN KLINIS :")
                         
                         warnings_found = False
                         sys_bp = user_inputs.get('SystolicBP', None)
@@ -573,8 +568,8 @@ if uploaded_file is not None:
                         if not warnings_found:
                             st.info("✅ **Semua parameter terpilih berada pada batas aman fisiologis.**\n*   Lanjutkan asuhan rutin ANC (K1-K6) dan suplementasi gizi.")
 
-        else:
-            for t in [tab2, tab3, tab4, tab5]:
-                with t: st.info("Silakan Mulai Auto-Feature Selection & Training")
+    elif not start_training and 'df_raw' in st.session_state:
+         st.info("Silakan klik 'Mulai Training' pada menu di sebelah kiri untuk memproses data.")
+
 else:
-    st.info("Silakan upload dataset (Maternal Health Risk)")
+    st.info("Silakan upload dataset (Maternal Health Risk) untuk memulai program.")
